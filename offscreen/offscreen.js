@@ -22,8 +22,12 @@ let apiKey = '';
 
 let silenceDurationLimit = 150; // ms (Ultra-fast real-time 0.15s pause to slice)
 let minChunkDuration = 550;    // ms (Fast speech slice 0.55s)
-let maxChunkDuration = 1800;   // ms (Maximum 1.8s chunk for real-time cadence)
+let maxChunkDuration = 2800;   // ms (Maximum 2.8s chunk to prevent 429 rate limit)
 let noiseFloor = 0.008;        // Adaptive ambient noise floor tracking
+
+// Rate limiter spacing to prevent hitting Groq 20 RPM limit
+let lastApiRequestTime = 0;
+const MIN_API_INTERVAL = 2600; // ms (Guarantees max ~22 requests per minute)
 
 // Contextual prompt buffer for Whisper API acceleration
 let lastPromptContext = '';
@@ -55,34 +59,34 @@ kuromoji.builder({ dicPath: '../lib/dict/' }).build((err, tokenizer) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'INIT_CAPTURE') {
     tabId = message.tabId;
-    apiProvider = message.apiProvider || 'groq';
-    apiKey = message.apiKey || '';
-    silenceThreshold = message.silenceThreshold !== undefined ? message.silenceThreshold : 0.015;
+    if (message.apiProvider) apiProvider = message.apiProvider;
+    if (message.apiKey) apiKey = message.apiKey;
+    if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
     
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 500;
+      silenceDurationLimit = 400;
       minChunkDuration = 1800;
-      maxChunkDuration = 5000;
+      maxChunkDuration = 4500;
     } else { // fast (ultra real-time sub-second)
       silenceDurationLimit = 150;
       minChunkDuration = 550;
-      maxChunkDuration = 1800;
+      maxChunkDuration = 2800;
     }
     
     startCapture(message.streamId);
   } else if (message.type === 'UPDATE_CONFIG') {
-    apiProvider = message.apiProvider || 'groq';
-    apiKey = message.apiKey || '';
-    silenceThreshold = message.silenceThreshold !== undefined ? message.silenceThreshold : 0.015;
+    if (message.apiProvider) apiProvider = message.apiProvider;
+    if (message.apiKey) apiKey = message.apiKey;
+    if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
     
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 500;
+      silenceDurationLimit = 400;
       minChunkDuration = 1800;
-      maxChunkDuration = 5000;
+      maxChunkDuration = 4500;
     } else { // fast
       silenceDurationLimit = 150;
       minChunkDuration = 550;
-      maxChunkDuration = 1800;
+      maxChunkDuration = 2800;
     }
   }
 });
@@ -201,11 +205,16 @@ async function startCapture(streamId) {
 
         elapsedRecordingTime += 50;
 
-        // Trigger slice check
+        const now = Date.now();
+        const timeSinceLastReq = now - lastApiRequestTime;
+
+        // Trigger slice check (rate-limited pacing to prevent Groq 429)
         if (elapsedRecordingTime >= maxChunkDuration) {
           sliceChunk();
         } else if (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit) {
-          sliceChunk();
+          if (timeSinceLastReq >= MIN_API_INTERVAL) {
+            sliceChunk();
+          }
         }
       }, 50);
     });
@@ -248,6 +257,8 @@ function processAudioChunk(blob, startTime, endTime) {
     sendErrorSubtitle("Missing API Key. Configure settings.", startTime, endTime);
     return;
   }
+
+  lastApiRequestTime = Date.now();
 
   (async () => {
     try {

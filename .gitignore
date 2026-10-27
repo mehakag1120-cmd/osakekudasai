@@ -6,6 +6,8 @@ package-lock.json
 .env
 .env.*
 *.env
+env.json
+*.env.json
 *.key
 *api_key*
 groq_api_key.txt

@@ -105,24 +105,39 @@ function trySendInitCapture() {
   }
 }
 
-// Load keys securely from .env if present
+// Load keys securely from env.json or .env if present
 async function loadEnvIntoStorage() {
   try {
-    const url = chrome.runtime.getURL('.env');
-    const res = await fetch(url);
-    if (!res.ok) return;
-    const text = await res.text();
-    const env = {};
-    text.split('\n').forEach(line => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx !== -1) {
-        const k = trimmed.slice(0, eqIdx).trim();
-        const v = trimmed.slice(eqIdx + 1).trim();
-        env[k] = v;
+    let env = {};
+    
+    // 1. Try env.json first (clean JSON, never blocked by Chromium dotfile filters)
+    try {
+      const jsonRes = await fetch(chrome.runtime.getURL('env.json'));
+      if (jsonRes.ok) {
+        env = await jsonRes.json();
       }
-    });
+    } catch (_) {}
+
+    // 2. Fallback to .env text file parsing
+    if (!env.GROQ_API_KEY && !env.OPENAI_API_KEY) {
+      try {
+        const url = chrome.runtime.getURL('.env');
+        const res = await fetch(url);
+        if (res.ok) {
+          const text = await res.text();
+          text.split('\n').forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) return;
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx !== -1) {
+              const k = trimmed.slice(0, eqIdx).trim();
+              const v = trimmed.slice(eqIdx + 1).trim();
+              env[k] = v;
+            }
+          });
+        }
+      } catch (_) {}
+    }
 
     const updates = {};
     if (env.GROQ_API_KEY) updates.groqApiKey = env.GROQ_API_KEY;
@@ -130,10 +145,10 @@ async function loadEnvIntoStorage() {
 
     if (Object.keys(updates).length > 0) {
       await chrome.storage.local.set(updates);
-      console.log("Rikimashou: Environment keys loaded securely from .env");
+      console.log("Rikimashou: Environment keys loaded securely from env.json / .env");
     }
   } catch (e) {
-    // .env not available or blocked, fall back to storage
+    // Ignore, fallback to storage
   }
 }
 
@@ -370,7 +385,11 @@ function handleRateLimitHit() {
   console.warn("API Rate Limit (429) detected! Switching transcription to Slow Mode.");
   
   // 1. Notify offscreen page to use larger chunks
-  chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', speedMode: 'slow' }).catch(() => {});
+  chrome.runtime.sendMessage({ 
+    type: 'UPDATE_CONFIG', 
+    speedMode: 'slow',
+    apiKey: pendingCapture ? pendingCapture.apiKey : undefined
+  }).catch(() => {});
   
   // 2. Notify content script to display the rate limit status badge
   if (activeTabId) {
@@ -382,7 +401,11 @@ function handleRateLimitHit() {
   rateLimitTimer = setTimeout(() => {
     speedMode = 'fast';
     console.log("Rate limit cool-down complete. Restoring Fast Mode.");
-    chrome.runtime.sendMessage({ type: 'UPDATE_CONFIG', speedMode: 'fast' }).catch(() => {});
+    chrome.runtime.sendMessage({ 
+      type: 'UPDATE_CONFIG', 
+      speedMode: 'fast',
+      apiKey: pendingCapture ? pendingCapture.apiKey : undefined 
+    }).catch(() => {});
     if (activeTabId) {
       chrome.tabs.sendMessage(activeTabId, { type: 'UPDATE_STATUS_BADGE', statusText: '🔴 LIVE CAPTURING AUDIO' }).catch(() => {});
     }
