@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
 
     case 'RATE_LIMIT_HIT':
-      handleRateLimitHit();
+      handleRateLimitHit(message);
       return false;
   }
 });
@@ -141,6 +141,7 @@ async function loadEnvIntoStorage() {
 
     const updates = {};
     if (env.GROQ_API_KEY) updates.groqApiKey = env.GROQ_API_KEY;
+    if (env.GEMINI_API_KEY) updates.geminiApiKey = env.GEMINI_API_KEY;
     if (env.OPENAI_API_KEY) updates.openaiApiKey = env.OPENAI_API_KEY;
 
     if (Object.keys(updates).length > 0) {
@@ -160,12 +161,15 @@ async function handleStartCapture(tabId, sendResponse) {
   await loadEnvIntoStorage();
 
   // Verify API Key exists
-  chrome.storage.local.get(['apiProvider', 'groqApiKey', 'openaiApiKey', 'silenceThreshold'], async (settings) => {
+  chrome.storage.local.get(['apiProvider', 'groqApiKey', 'geminiApiKey', 'openaiApiKey', 'silenceThreshold'], async (settings) => {
     const provider = settings.apiProvider || 'groq';
-    const key = (provider === 'groq' ? settings.groqApiKey : settings.openaiApiKey) || '';
+    let key = '';
+    if (provider === 'groq') key = settings.groqApiKey || '';
+    else if (provider === 'gemini') key = settings.geminiApiKey || '';
+    else key = settings.openaiApiKey || '';
     
     if (!key) {
-      captureError = `Missing API key for ${provider}. Add GROQ_API_KEY to your .env file or configure Extension Settings.`;
+      captureError = `Missing API key for ${provider}. Add ${provider.toUpperCase()}_API_KEY to your .env file or configure Extension Settings.`;
       sendResponse({ error: captureError });
       return;
     }
@@ -199,6 +203,9 @@ async function handleStartCapture(tabId, sendResponse) {
           tabId: tabId,
           apiProvider: provider,
           apiKey: key,
+          groqApiKey: settings.groqApiKey || '',
+          geminiApiKey: settings.geminiApiKey || '',
+          openaiApiKey: settings.openaiApiKey || '',
           silenceThreshold: settings.silenceThreshold !== undefined ? settings.silenceThreshold : 0.015,
           speedMode: speedMode
         };
@@ -362,14 +369,20 @@ async function restoreSessionState() {
 // Storage Listener to sync configurations to offscreen document dynamically
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && isRecording) {
-    chrome.storage.local.get(['apiProvider', 'groqApiKey', 'openaiApiKey', 'silenceThreshold'], (settings) => {
+    chrome.storage.local.get(['apiProvider', 'groqApiKey', 'geminiApiKey', 'openaiApiKey', 'silenceThreshold'], (settings) => {
       const provider = settings.apiProvider || 'groq';
-      const key = (provider === 'groq' ? settings.groqApiKey : settings.openaiApiKey) || '';
+      let key = '';
+      if (provider === 'groq') key = settings.groqApiKey || '';
+      else if (provider === 'gemini') key = settings.geminiApiKey || '';
+      else key = settings.openaiApiKey || '';
       
       chrome.runtime.sendMessage({
         type: 'UPDATE_CONFIG',
         apiProvider: provider,
         apiKey: key,
+        groqApiKey: settings.groqApiKey || '',
+        geminiApiKey: settings.geminiApiKey || '',
+        openaiApiKey: settings.openaiApiKey || '',
         silenceThreshold: settings.silenceThreshold !== undefined ? settings.silenceThreshold : 0.015,
         speedMode: speedMode
       }).catch(() => {});
@@ -378,36 +391,25 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 // Dynamic Rate Limit Adjuster
-function handleRateLimitHit() {
-  if (speedMode === 'slow') return; // already in slow fallback mode
+function handleRateLimitHit(message) {
+  const retryAfter = (message && message.retryAfter) || 15;
+  console.warn(`API Rate Limit (429) hit. Pacing paused for ${retryAfter}s.`);
   
-  speedMode = 'slow';
-  console.warn("API Rate Limit (429) detected! Switching transcription to Slow Mode.");
-  
-  // 1. Notify offscreen page to use larger chunks
-  chrome.runtime.sendMessage({ 
-    type: 'UPDATE_CONFIG', 
-    speedMode: 'slow',
-    apiKey: pendingCapture ? pendingCapture.apiKey : undefined
-  }).catch(() => {});
-  
-  // 2. Notify content script to display the rate limit status badge
+  // Notify content script to display cooldown badge
   if (activeTabId) {
-    chrome.tabs.sendMessage(activeTabId, { type: 'UPDATE_STATUS_BADGE', statusText: '⚠️ RATE LIMITED (SLOW MODE)' }).catch(() => {});
+    chrome.tabs.sendMessage(activeTabId, { 
+      type: 'UPDATE_STATUS_BADGE', 
+      statusText: `⏳ COOLDOWN (${retryAfter}s)` 
+    }).catch(() => {});
   }
   
-  // 3. Set a cool-down timer to return to fast mode after 60s
   if (rateLimitTimer) clearTimeout(rateLimitTimer);
   rateLimitTimer = setTimeout(() => {
-    speedMode = 'fast';
-    console.log("Rate limit cool-down complete. Restoring Fast Mode.");
-    chrome.runtime.sendMessage({ 
-      type: 'UPDATE_CONFIG', 
-      speedMode: 'fast',
-      apiKey: pendingCapture ? pendingCapture.apiKey : undefined 
-    }).catch(() => {});
     if (activeTabId) {
-      chrome.tabs.sendMessage(activeTabId, { type: 'UPDATE_STATUS_BADGE', statusText: '🔴 LIVE CAPTURING AUDIO' }).catch(() => {});
+      chrome.tabs.sendMessage(activeTabId, { 
+        type: 'UPDATE_STATUS_BADGE', 
+        statusText: '🔴 LIVE CAPTURING AUDIO' 
+      }).catch(() => {});
     }
-  }, 60000);
+  }, retryAfter * 1000);
 }

@@ -16,8 +16,10 @@ navItems.forEach(item => {
 // Cache elements
 const providerSelect = document.getElementById('api-provider');
 const groqKeyGroup = document.getElementById('groq-key-group');
+const geminiKeyGroup = document.getElementById('gemini-key-group');
 const openaiKeyGroup = document.getElementById('openai-key-group');
 const groqKeyInput = document.getElementById('groq-api-key');
+const geminiKeyInput = document.getElementById('gemini-api-key');
 const openaiKeyInput = document.getElementById('openai-api-key');
 const saveApiBtn = document.getElementById('save-api-btn');
 const saveStatus = document.getElementById('save-status');
@@ -39,13 +41,9 @@ const optCost = document.getElementById('stat-opt-cost');
 
 // Provider toggle
 providerSelect.addEventListener('change', () => {
-  if (providerSelect.value === 'groq') {
-    groqKeyGroup.classList.remove('hidden');
-    openaiKeyGroup.classList.add('hidden');
-  } else {
-    groqKeyGroup.classList.add('hidden');
-    openaiKeyGroup.classList.remove('hidden');
-  }
+  groqKeyGroup.classList.toggle('hidden', providerSelect.value !== 'groq');
+  geminiKeyGroup.classList.toggle('hidden', providerSelect.value !== 'gemini');
+  openaiKeyGroup.classList.toggle('hidden', providerSelect.value !== 'openai');
 });
 
 // Anki toggle
@@ -62,6 +60,7 @@ function loadSettings() {
   chrome.storage.local.get([
     'apiProvider',
     'groqApiKey',
+    'geminiApiKey',
     'openaiApiKey',
     'ankiEnabled',
     'ankiDeck',
@@ -74,6 +73,7 @@ function loadSettings() {
     providerSelect.value = settings.apiProvider || 'groq';
     providerSelect.dispatchEvent(new Event('change'));
     groqKeyInput.value = settings.groqApiKey || '';
+    geminiKeyInput.value = settings.geminiApiKey || '';
     openaiKeyInput.value = settings.openaiApiKey || '';
 
     // Anki
@@ -105,6 +105,7 @@ saveApiBtn.addEventListener('click', () => {
   const settings = {
     apiProvider: providerSelect.value,
     groqApiKey: groqKeyInput.value.trim(),
+    geminiApiKey: geminiKeyInput.value.trim(),
     openaiApiKey: openaiKeyInput.value.trim()
   };
 

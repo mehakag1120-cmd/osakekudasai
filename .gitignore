@@ -5,6 +5,7 @@ package-lock.json
 # Environment variables & secrets
 .env
 .env.*
+!.env.example
 *.env
 env.json
 *.env.json

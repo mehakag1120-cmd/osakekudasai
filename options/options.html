@@ -28,15 +28,22 @@
         <div class="form-group">
           <label for="api-provider">Active Provider</label>
           <select id="api-provider" class="form-control">
-            <option value="groq">Groq (Recommended - Fast & Free)</option>
-            <option value="openai">OpenAI (Paid - Official Whisper)</option>
+            <option value="groq">Groq Whisper Turbo (Ultra-Fast & Free)</option>
+            <option value="gemini">Google Gemini 3.5 Transcribe (High Quota & Native Audio)</option>
+            <option value="openai">OpenAI Whisper (Paid)</option>
           </select>
         </div>
 
         <div id="groq-key-group" class="form-group key-group">
           <label for="groq-api-key">Groq API Key</label>
           <input type="password" id="groq-api-key" class="form-control" placeholder="gsk_...">
-          <small class="help-text">Get one from the <a href="https://console.groq.com/keys" target="_blank">Groq Console</a>.</small>
+          <small class="help-text">Get one from the <a href="https://console.groq.com/keys" target="_blank">Groq Console</a>. Supports multiple comma-separated keys for higher RPM.</small>
+        </div>
+
+        <div id="gemini-key-group" class="form-group key-group hidden">
+          <label for="gemini-api-key">Google Gemini API Key</label>
+          <input type="password" id="gemini-api-key" class="form-control" placeholder="AQ... or AIza...">
+          <small class="help-text">Get one from <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a>.</small>
         </div>
 
         <div id="openai-key-group" class="form-group key-group hidden">

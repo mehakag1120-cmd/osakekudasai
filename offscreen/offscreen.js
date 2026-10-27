@@ -19,15 +19,51 @@ let checkInterval = null;
 let silenceThreshold = 0.015;
 let apiProvider = 'groq';
 let apiKey = '';
+let groqApiKey = '';
+let geminiApiKey = '';
+let openaiApiKey = '';
+let groqApiKeys = [];
+let groqKeyIndex = 0;
+let groqCooldownUntil = 0;
 
-let silenceDurationLimit = 150; // ms (Ultra-fast real-time 0.15s pause to slice)
-let minChunkDuration = 550;    // ms (Fast speech slice 0.55s)
-let maxChunkDuration = 2800;   // ms (Maximum 2.8s chunk to prevent 429 rate limit)
+let silenceDurationLimit = 150; // ms (Real-time pause detection)
+let minChunkDuration = 550;    // ms (Fast speech slice)
+let maxChunkDuration = 3200;   // ms (Sync with RPM governor)
 let noiseFloor = 0.008;        // Adaptive ambient noise floor tracking
 
-// Rate limiter spacing to prevent hitting Groq 20 RPM limit
+// Rate limiter spacing to prevent hitting API quotas
 let lastApiRequestTime = 0;
-const MIN_API_INTERVAL = 2600; // ms (Guarantees max ~22 requests per minute)
+
+function setApiKeys(config) {
+  if (config.apiProvider) apiProvider = config.apiProvider;
+  if (config.apiKey) apiKey = config.apiKey;
+  if (config.groqApiKey) {
+    groqApiKey = config.groqApiKey;
+  } else if (apiProvider === 'groq' && apiKey) {
+    groqApiKey = apiKey;
+  }
+  if (groqApiKey) {
+    groqApiKeys = groqApiKey.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (config.geminiApiKey) geminiApiKey = config.geminiApiKey;
+  if (config.openaiApiKey) openaiApiKey = config.openaiApiKey;
+}
+
+function getNextGroqKey() {
+  if (groqApiKeys.length === 0) return groqApiKey || apiKey;
+  const key = groqApiKeys[groqKeyIndex % groqApiKeys.length];
+  groqKeyIndex++;
+  return key;
+}
+
+function getMinRequestInterval() {
+  if (apiProvider === 'groq') {
+    const keyCount = Math.max(1, groqApiKeys.length);
+    // 3150ms guarantees ~19 RPM (< 20 RPM limit). With multiple keys: scales down
+    return Math.max(1200, Math.ceil(3150 / keyCount));
+  }
+  return 1500; // Gemini / OpenAI
+}
 
 // Contextual prompt buffer for Whisper API acceleration
 let lastPromptContext = '';
@@ -59,26 +95,10 @@ kuromoji.builder({ dicPath: '../lib/dict/' }).build((err, tokenizer) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'INIT_CAPTURE') {
     tabId = message.tabId;
-    if (message.apiProvider) apiProvider = message.apiProvider;
-    if (message.apiKey) apiKey = message.apiKey;
+    setApiKeys(message);
     if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
     
-    if (message.speedMode === 'slow') {
-      silenceDurationLimit = 400;
-      minChunkDuration = 1800;
-      maxChunkDuration = 4500;
-    } else { // fast (ultra real-time sub-second)
-      silenceDurationLimit = 150;
-      minChunkDuration = 550;
-      maxChunkDuration = 2800;
-    }
-    
-    startCapture(message.streamId);
-  } else if (message.type === 'UPDATE_CONFIG') {
-    if (message.apiProvider) apiProvider = message.apiProvider;
-    if (message.apiKey) apiKey = message.apiKey;
-    if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
-    
+    const minInterval = getMinRequestInterval();
     if (message.speedMode === 'slow') {
       silenceDurationLimit = 400;
       minChunkDuration = 1800;
@@ -86,7 +106,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else { // fast
       silenceDurationLimit = 150;
       minChunkDuration = 550;
-      maxChunkDuration = 2800;
+      maxChunkDuration = Math.max(3200, minInterval);
+    }
+    
+    startCapture(message.streamId);
+  } else if (message.type === 'UPDATE_CONFIG') {
+    setApiKeys(message);
+    if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
+    
+    const minInterval = getMinRequestInterval();
+    if (message.speedMode === 'slow') {
+      silenceDurationLimit = 400;
+      minChunkDuration = 1800;
+      maxChunkDuration = 4500;
+    } else { // fast
+      silenceDurationLimit = 150;
+      minChunkDuration = 550;
+      maxChunkDuration = Math.max(3200, minInterval);
     }
   }
 });
@@ -207,12 +243,13 @@ async function startCapture(streamId) {
 
         const now = Date.now();
         const timeSinceLastReq = now - lastApiRequestTime;
+        const minInterval = getMinRequestInterval();
 
-        // Trigger slice check (rate-limited pacing to prevent Groq 429)
-        if (elapsedRecordingTime >= maxChunkDuration) {
-          sliceChunk();
-        } else if (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit) {
-          if (timeSinceLastReq >= MIN_API_INTERVAL) {
+        // Enforce strict rate-limiting governor:
+        // NEVER slice faster than minInterval to prevent HTTP 429
+        if (timeSinceLastReq >= minInterval) {
+          if (elapsedRecordingTime >= maxChunkDuration || 
+             (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit)) {
             sliceChunk();
           }
         }
@@ -251,10 +288,140 @@ function getVideoTime(callback) {
   });
 }
 
+// Convert AudioBuffer to 16kHz mono WAV for Google Gemini API
+function audioBufferToWav(audioBuffer, targetSampleRate = 16000) {
+  const sourceChannelData = audioBuffer.getChannelData(0);
+  const sourceSampleRate = audioBuffer.sampleRate;
+  const sampleRateRatio = sourceSampleRate / targetSampleRate;
+  const targetLength = Math.round(sourceChannelData.length / sampleRateRatio);
+  const resampled = new Float32Array(targetLength);
+
+  for (let i = 0; i < targetLength; i++) {
+    const originIndex = i * sampleRateRatio;
+    const indexFloor = Math.floor(originIndex);
+    const indexCeil = Math.min(sourceChannelData.length - 1, Math.ceil(originIndex));
+    const interpolation = originIndex - indexFloor;
+    resampled[i] = sourceChannelData[indexFloor] * (1 - interpolation) + sourceChannelData[indexCeil] * interpolation;
+  }
+
+  const buffer = new ArrayBuffer(44 + resampled.length * 2);
+  const view = new DataView(buffer);
+
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + resampled.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, resampled.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < resampled.length; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return buffer;
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+// Transcribe audio chunk with Google Gemini 3.5 Transcribe
+async function transcribeGemini(blob, startTime, endTime) {
+  const gKey = geminiApiKey || apiKey;
+  if (!gKey) {
+    throw new Error("Missing Gemini API Key. Configure settings or .env.");
+  }
+
+  const arrayBuf = await blob.arrayBuffer();
+  const audioBuf = await audioContext.decodeAudioData(arrayBuf);
+  const wavBuffer = audioBufferToWav(audioBuf, 16000);
+  const base64Audio = arrayBufferToBase64(wavBuffer);
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent?key=${gKey}`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: 'audio/wav', data: base64Audio } },
+          { text: 'Transcribe the spoken Japanese in this audio into Japanese text. Output ONLY the exact transcription in Japanese Kanji/Kana. If silence or music with no speech, reply with nothing.' }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.0
+      }
+    })
+  });
+
+  if (!response.ok) {
+    // If dedicated transcribe model is busy or returns non-200, fallback seamlessly to gemini-3.5-flash
+    if (response.status === 404 || response.status === 503) {
+      console.warn("Transcribe model busy, failing over to gemini-3.5-flash...");
+      const fbEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${gKey}`;
+      const fbResponse = await fetch(fbEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: 'audio/wav', data: base64Audio } },
+              { text: 'Transcribe the spoken Japanese audio into Japanese text. Output ONLY the exact Japanese transcription. Do not translate. If silence, output empty string.' }
+            ]
+          }],
+          generationConfig: { temperature: 0.0 }
+        })
+      });
+      if (fbResponse.ok) {
+        const fbData = await fbResponse.json();
+        return fbData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+    }
+    const errText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
 // Process and transcribe audio chunk directly from offscreen
 function processAudioChunk(blob, startTime, endTime) {
-  if (!apiKey) {
-    sendErrorSubtitle("Missing API Key. Configure settings.", startTime, endTime);
+  // If Groq is cooling down after 429
+  if (apiProvider === 'groq' && groqCooldownUntil && Date.now() < groqCooldownUntil) {
+    if (geminiApiKey) {
+      console.log("Using Gemini during Groq rate limit cooldown.");
+      (async () => {
+        try {
+          const text = await transcribeGemini(blob, startTime, endTime);
+          handleTranscribedText(text, startTime, endTime, 'gemini');
+        } catch (err) {
+          console.warn("Gemini transcription fallback error:", err.message);
+        }
+      })();
+    }
     return;
   }
 
@@ -263,86 +430,142 @@ function processAudioChunk(blob, startTime, endTime) {
   (async () => {
     try {
       let text = '';
-      const formData = new FormData();
-      formData.append('file', blob, 'audio.webm');
-      formData.append('language', 'ja');
-      if (lastPromptContext) {
-        formData.append('prompt', lastPromptContext.slice(-120));
+
+      if (apiProvider === 'gemini') {
+        text = await transcribeGemini(blob, startTime, endTime);
+        handleTranscribedText(text, startTime, endTime, 'gemini');
+        return;
       }
 
-      formData.append('temperature', '0.0');
-
       if (apiProvider === 'groq') {
+        const activeGroqKey = getNextGroqKey();
+        if (!activeGroqKey) {
+          sendErrorSubtitle("Missing Groq API Key. Configure settings or .env.", startTime, endTime);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', blob, 'audio.webm');
+        formData.append('language', 'ja');
         formData.append('model', 'whisper-large-v3-turbo');
+        formData.append('temperature', '0.0');
+        if (lastPromptContext) {
+          formData.append('prompt', lastPromptContext.slice(-120));
+        }
+
         const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${activeGroqKey}`
           },
           body: formData
         });
+
         if (!response.ok) {
-          const errText = await response.text();
           if (response.status === 429) {
-            chrome.runtime.sendMessage({ type: 'RATE_LIMIT_HIT' }).catch(() => {});
+            const retryAfter = parseInt(response.headers.get('retry-after') || '20', 10);
+            groqCooldownUntil = Date.now() + (retryAfter * 1000);
+            chrome.runtime.sendMessage({ type: 'RATE_LIMIT_HIT', retryAfter }).catch(() => {});
+
+            // Seamless Instant Failover to Gemini:
+            if (geminiApiKey) {
+              console.log("Groq rate limit hit. Seamlessly transcribing chunk with Gemini API!");
+              try {
+                const geminiText = await transcribeGemini(blob, startTime, endTime);
+                handleTranscribedText(geminiText, startTime, endTime, 'gemini');
+              } catch (gErr) {
+                console.warn("Gemini failover also encountered an error:", gErr.message);
+              }
+            }
+            return; // Never throw raw 429 JSON onto video screen!
           }
+
+          const errText = await response.text();
           throw new Error(`Groq API error (${response.status}): ${errText}`);
         }
+
         const data = await response.json();
         text = data.text || '';
-      } else {
+        handleTranscribedText(text, startTime, endTime, 'groq');
+        return;
+      }
+
+      if (apiProvider === 'openai') {
+        const activeKey = openaiApiKey || apiKey;
+        if (!activeKey) {
+          sendErrorSubtitle("Missing OpenAI API Key. Configure settings or .env.", startTime, endTime);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', blob, 'audio.webm');
+        formData.append('language', 'ja');
         formData.append('model', 'whisper-1');
+        formData.append('temperature', '0.0');
+        if (lastPromptContext) {
+          formData.append('prompt', lastPromptContext.slice(-120));
+        }
+
         const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey}`
+            'Authorization': `Bearer ${activeKey}`
           },
           body: formData
         });
+
         if (!response.ok) {
           const errText = await response.text();
           if (response.status === 429) {
-            chrome.runtime.sendMessage({ type: 'RATE_LIMIT_HIT' }).catch(() => {});
+            chrome.runtime.sendMessage({ type: 'RATE_LIMIT_HIT', retryAfter: 20 }).catch(() => {});
+            return;
           }
           throw new Error(`OpenAI API error (${response.status}): ${errText}`);
         }
+
         const data = await response.json();
         text = data.text || '';
-      }
-
-      text = text.trim();
-      
-      // Filter out common Whisper silence/noise hallucinations
-      const hallucinations = [
-        "ご視聴ありがとうございました",
-        "ご視聴ありがとうございました。",
-        "視聴ありがとうございました",
-        "視聴ありがとうございました。",
-        "チャンネル登録よろしくお願いします",
-        "チャンネル登録よろしくお願いします。",
-        "ご視聴いただきありがとうございました",
-        "ご視聴いただきありがとうございました。"
-      ];
-      
-      if (hallucinations.includes(text)) {
-        console.log(`Filtered out Whisper hallucination: "${text}"`);
-        return;
-      }
-      
-      if (text) {
-        lastPromptContext = (lastPromptContext + ' ' + text).slice(-300);
-        chrome.runtime.sendMessage({
-          type: 'UPDATE_STATS',
-          durationSec: (endTime - startTime),
-          provider: apiProvider
-        });
-        tokenizeAndForward(text, startTime, endTime);
+        handleTranscribedText(text, startTime, endTime, 'openai');
       }
     } catch (err) {
       console.error("Transcription failed in offscreen document:", err);
-      sendErrorSubtitle(err.message, startTime, endTime);
+      if (!err.message.includes('429') && !err.message.includes('Rate limit')) {
+        sendErrorSubtitle(err.message, startTime, endTime);
+      }
     }
   })();
+}
+
+// Dispatches transcribed text and filters common silence hallucinations
+function handleTranscribedText(rawText, startTime, endTime, providerUsed) {
+  let text = (rawText || '').trim();
+
+  // Filter out common Whisper/AI silence & noise hallucinations
+  const hallucinations = [
+    "ご視聴ありがとうございました",
+    "ご視聴ありがとうございました。",
+    "視聴ありがとうございました",
+    "視聴ありがとうございました。",
+    "チャンネル登録よろしくお願いします",
+    "チャンネル登録よろしくお願いします。",
+    "ご視聴いただきありがとうございました",
+    "ご視聴いただきありがとうございました。"
+  ];
+
+  if (hallucinations.includes(text)) {
+    console.log(`Filtered out hallucination: "${text}"`);
+    return;
+  }
+
+  if (text) {
+    lastPromptContext = (lastPromptContext + ' ' + text).slice(-300);
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_STATS',
+      durationSec: (endTime - startTime),
+      provider: providerUsed || apiProvider
+    });
+    tokenizeAndForward(text, startTime, endTime);
+  }
 }
 
 // Send error message as a subtitle token
