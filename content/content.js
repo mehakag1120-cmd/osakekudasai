@@ -320,6 +320,11 @@
   // Render tokens list to an HTML container
   function renderTokensToElement(tokens, element) {
     tokens.forEach(token => {
+      // Discard any lingering noise hallucination tokens (e.g. "awwwwww")
+      if (!token || !token.surface || /^(a+w+w*|a+h+h*|o+h+h*|u+h+h*|u+m+m*|e+h+h*)$/i.test(token.surface.trim())) {
+        return;
+      }
+
       const span = document.createElement('span');
       
       // 1. Grammatical particles & object markers (助詞) - styled as subtle grammar glue, never treated as vocabulary words

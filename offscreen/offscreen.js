@@ -453,9 +453,11 @@ function processAudioChunk(blob, startTime, endTime) {
         formData.append('model', 'whisper-large-v3-turbo');
         formData.append('temperature', '0.0');
         formData.append('response_format', 'json');
-        if (lastPromptContext) {
-          formData.append('prompt', lastPromptContext.slice(-120));
-        }
+
+        // Anchored Japanese immersion prompt: keeps Whisper strictly focused on Japanese dialogue and stops English hallucination loops
+        const basePrompt = '日本語の日常会話、アニメのセリフ、正確な表記。';
+        const promptText = lastPromptContext ? `${basePrompt} ${lastPromptContext.slice(-80)}` : basePrompt;
+        formData.append('prompt', promptText);
 
         const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
@@ -506,9 +508,10 @@ function processAudioChunk(blob, startTime, endTime) {
         formData.append('language', 'ja');
         formData.append('model', 'whisper-1');
         formData.append('temperature', '0.0');
-        if (lastPromptContext) {
-          formData.append('prompt', lastPromptContext.slice(-120));
-        }
+        formData.append('response_format', 'json');
+        const basePrompt = '日本語の日常会話、アニメのセリフ、正確な表記。';
+        const promptText = lastPromptContext ? `${basePrompt} ${lastPromptContext.slice(-80)}` : basePrompt;
+        formData.append('prompt', promptText);
 
         const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
           method: 'POST',
@@ -540,11 +543,47 @@ function processAudioChunk(blob, startTime, endTime) {
   })();
 }
 
+// Sanitizes raw transcriptions and purges English filler hallucinations
+function sanitizeTranscribedText(raw) {
+  if (!raw) return '';
+  let cleaned = raw;
+
+  // 1. Remove bracketed/parenthetical audio cues like [music], (laughter), (sigh), [applause]
+  cleaned = cleaned.replace(/\[[^\]]+\]|\([^)]+\)/g, ' ');
+
+  // 2. Remove common English filler noise hallucinations ("awww", "awwwwww", "ahhh", "ohhh", "uhhh", "ummm", "ugh", "yay")
+  cleaned = cleaned.replace(/\b(a+w+w*|a+h+h*|o+h+h*|u+h+h*|u+m+m*|e+h+h*|m+m+m*|u+g+h+|y+a+y+|w+o+w+)\b/gi, ' ');
+
+  // 3. Remove common YouTube/Whisper subtitle hallucination strings
+  cleaned = cleaned.replace(/(thank\s+you\s+for\s+watching|please\s+subscribe|subtitles?\s+by|transcript\s+by)/gi, ' ');
+
+  // 4. Clean isolated or leading punctuation artifacts
+  cleaned = cleaned.replace(/\s+([!?,.、。])/g, '$1');
+  cleaned = cleaned.replace(/^([!?,.、。\s])+/g, '');
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  // 5. If there are NO Japanese characters and it is just Latin filler or symbols, discard it completely
+  const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(cleaned);
+  if (!hasJapanese) {
+    if (/^[a-zA-Z0-9\s.,!?'"~:;\-_*]+$/.test(cleaned)) {
+      console.log(`Filtered out non-Japanese noise hallucination: "${cleaned}"`);
+      return '';
+    }
+  }
+
+  return cleaned;
+}
+
 // Dispatches transcribed text and filters common silence hallucinations
 function handleTranscribedText(rawText, startTime, endTime, providerUsed) {
-  let text = (rawText || '').trim();
+  // 1. Sanitize text and strip noise/exclamations
+  const text = sanitizeTranscribedText(rawText);
 
-  // Filter out common Whisper/AI silence & noise hallucinations
+  if (!text) {
+    return;
+  }
+
+  // 2. Filter out known silence/ending hallucinations
   const hallucinations = [
     "ご視聴ありがとうございました",
     "ご視聴ありがとうございました。",
@@ -561,15 +600,19 @@ function handleTranscribedText(rawText, startTime, endTime, providerUsed) {
     return;
   }
 
-  if (text) {
-    lastPromptContext = (lastPromptContext + ' ' + text).slice(-300);
-    chrome.runtime.sendMessage({
-      type: 'UPDATE_STATS',
-      durationSec: (endTime - startTime),
-      provider: providerUsed || apiProvider
-    });
-    tokenizeAndForward(text, startTime, endTime);
+  // 3. Strictly anchor context only with Japanese characters:
+  // Never allow English noise or Latin hallucinations into lastPromptContext!
+  const japaneseCharsOnly = text.replace(/[^\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF0-9、。！？]/g, '');
+  if (japaneseCharsOnly) {
+    lastPromptContext = (lastPromptContext + ' ' + japaneseCharsOnly).slice(-150);
   }
+
+  chrome.runtime.sendMessage({
+    type: 'UPDATE_STATS',
+    durationSec: (endTime - startTime),
+    provider: providerUsed || apiProvider
+  });
+  tokenizeAndForward(text, startTime, endTime);
 }
 
 // Send error message as a subtitle token
