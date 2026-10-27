@@ -20,9 +20,10 @@ let silenceThreshold = 0.015;
 let apiProvider = 'groq';
 let apiKey = '';
 
-let silenceDurationLimit = 220; // ms (Ultra-fast real-time 0.22s pause to slice)
-let minChunkDuration = 650;    // ms (Fast speech slice 0.65s)
-let maxChunkDuration = 3500;   // ms (Maximum 3.5s chunk)
+let silenceDurationLimit = 150; // ms (Ultra-fast real-time 0.15s pause to slice)
+let minChunkDuration = 550;    // ms (Fast speech slice 0.55s)
+let maxChunkDuration = 1800;   // ms (Maximum 1.8s chunk for real-time cadence)
+let noiseFloor = 0.008;        // Adaptive ambient noise floor tracking
 
 // Contextual prompt buffer for Whisper API acceleration
 let lastPromptContext = '';
@@ -59,13 +60,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     silenceThreshold = message.silenceThreshold !== undefined ? message.silenceThreshold : 0.015;
     
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 650;
-      minChunkDuration = 2200;
-      maxChunkDuration = 6500;
-    } else { // fast (real-time sub-second)
-      silenceDurationLimit = 220;
-      minChunkDuration = 650;
-      maxChunkDuration = 3500;
+      silenceDurationLimit = 500;
+      minChunkDuration = 1800;
+      maxChunkDuration = 5000;
+    } else { // fast (ultra real-time sub-second)
+      silenceDurationLimit = 150;
+      minChunkDuration = 550;
+      maxChunkDuration = 1800;
     }
     
     startCapture(message.streamId);
@@ -75,13 +76,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     silenceThreshold = message.silenceThreshold !== undefined ? message.silenceThreshold : 0.015;
     
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 650;
-      minChunkDuration = 2200;
-      maxChunkDuration = 6500;
+      silenceDurationLimit = 500;
+      minChunkDuration = 1800;
+      maxChunkDuration = 5000;
     } else { // fast
-      silenceDurationLimit = 220;
-      minChunkDuration = 650;
-      maxChunkDuration = 3500;
+      silenceDurationLimit = 150;
+      minChunkDuration = 550;
+      maxChunkDuration = 1800;
     }
   }
 });
@@ -148,14 +149,12 @@ async function startCapture(streamId) {
       }
 
       // Process and transcribe completed chunk only if it contains active speech sound!
-      if (currentPeak >= 0.025) {
+      if (currentPeak >= 0.012 || currentPeak > noiseFloor * 1.35) {
         processAudioChunk(blob, startTime, endTime);
       } else {
-        console.log(`Skipped silent chunk (Peak RMS: ${currentPeak.toFixed(4)})`);
+        console.log(`Skipped silent chunk (Peak RMS: ${currentPeak.toFixed(4)}, noise floor: ${noiseFloor.toFixed(4)})`);
       }
     };
-
-    // Start Recording Session
 
     // Start Recording Session
     isRecording = true;
@@ -167,7 +166,7 @@ async function startCapture(streamId) {
       elapsedRecordingTime = 0;
       accumulatedSilenceTime = 0;
 
-      // Start silence checking loop (every 100ms)
+      // Start rapid adaptive voice activity checking loop (every 50ms)
       checkInterval = setInterval(() => {
         if (!isRecording || isStoppingToSlice) return;
 
@@ -181,19 +180,26 @@ async function startCapture(streamId) {
         }
         const rms = Math.sqrt(sumSquares / bufferLength);
 
+        // Smoothly adapt the noise floor to ambient background sound/music
+        noiseFloor = Math.min(noiseFloor * 0.992 + rms * 0.008, Math.max(0.002, rms));
+
         // Keep track of the peak volume in this chunk
         if (rms > peakRmsInChunk) {
           peakRmsInChunk = rms;
         }
 
-        // Silence check
-        if (rms < silenceThreshold) {
-          accumulatedSilenceTime += 100;
+        // Adaptive Speech Pause Detection:
+        // Triggered when current RMS drops near ambient noise floor
+        // OR when voice drops by >60% compared to the peak speech level in this chunk
+        const isPause = (rms <= noiseFloor * 1.35 + 0.005) || (peakRmsInChunk > 0.022 && rms < peakRmsInChunk * 0.38);
+
+        if (isPause) {
+          accumulatedSilenceTime += 50;
         } else {
-          accumulatedSilenceTime = 0;
+          accumulatedSilenceTime = Math.max(0, accumulatedSilenceTime - 25);
         }
 
-        elapsedRecordingTime += 100;
+        elapsedRecordingTime += 50;
 
         // Trigger slice check
         if (elapsedRecordingTime >= maxChunkDuration) {
@@ -201,7 +207,7 @@ async function startCapture(streamId) {
         } else if (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit) {
           sliceChunk();
         }
-      }, 100);
+      }, 50);
     });
 
   } catch (err) {
@@ -253,8 +259,10 @@ function processAudioChunk(blob, startTime, endTime) {
         formData.append('prompt', lastPromptContext.slice(-120));
       }
 
+      formData.append('temperature', '0.0');
+
       if (apiProvider === 'groq') {
-        formData.append('model', 'whisper-large-v3');
+        formData.append('model', 'whisper-large-v3-turbo');
         const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
           method: 'POST',
           headers: {
