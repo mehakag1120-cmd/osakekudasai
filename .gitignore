@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+*.key
+*api_key*
+groq_api_key.txt
+
+# IDE & Editor files
+.vs/
+.vscode/
+.idea/
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+*.log
+.dummy

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Rikimashou! Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="logo-emoji">💪</span>
+        <h2>rikimashou!</h2>
+      </div>
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="general">🔑 API Configuration</button>
+        <button class="nav-item" data-tab="anki">🎴 Anki Integration</button>
+        <button class="nav-item" data-tab="privacy">🛡️ Privacy & Stats</button>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <!-- GENERAL TAB -->
+      <section id="tab-general" class="tab-pane active">
+        <h2>API Configuration</h2>
+        <p class="description">Select your transcription engine. We recommend Groq Whisper for sub-second, real-time speed. Keys are read automatically from your local <code>.env</code> file or configured here.</p>
+        
+        <div class="form-group">
+          <label for="api-provider">Active Provider</label>
+          <select id="api-provider" class="form-control">
+            <option value="groq">Groq (Recommended - Fast & Free)</option>
+            <option value="openai">OpenAI (Paid - Official Whisper)</option>
+          </select>
+        </div>
+
+        <div id="groq-key-group" class="form-group key-group">
+          <label for="groq-api-key">Groq API Key</label>
+          <input type="password" id="groq-api-key" class="form-control" placeholder="gsk_...">
+          <small class="help-text">Get one from the <a href="https://console.groq.com/keys" target="_blank">Groq Console</a>.</small>
+        </div>
+
+        <div id="openai-key-group" class="form-group key-group hidden">
+          <label for="openai-api-key">OpenAI API Key</label>
+          <input type="password" id="openai-api-key" class="form-control" placeholder="sk-proj-...">
+          <small class="help-text">Get one from the <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI Dashboard</a>.</small>
+        </div>
+
+        <div class="action-row">
+          <button id="save-api-btn" class="primary-btn">Save Configuration</button>
+          <span id="save-status" class="save-status"></span>
+        </div>
+      </section>
+
+      <!-- ANKI TAB -->
+      <section id="tab-anki" class="tab-pane">
+        <h2>Anki Integration</h2>
+        <p class="description">Automatically synchronize vocabulary mined from videos to your local Anki decks via AnkiConnect.</p>
+
+        <div class="form-group toggle-group">
+          <div class="toggle-control">
+            <input type="checkbox" id="anki-enabled">
+            <label for="anki-enabled">Enable AnkiConnect Integration</label>
+          </div>
+          <p class="help-text">Card exports will remain disabled unless checked.</p>
+        </div>
+
+        <div id="anki-settings" class="anki-settings-box hidden">
+          <div class="form-group">
+            <label for="anki-url">AnkiConnect URL</label>
+            <input type="text" id="anki-url" class="form-control" value="http://localhost:8765" readonly>
+            <small class="help-text">Extension explicitly locks requests to local loopbacks for security.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="anki-deck">Target Deck Name</label>
+            <input type="text" id="anki-deck" class="form-control" placeholder="OsakeKudasai Immersion">
+          </div>
+
+          <button id="test-anki-btn" class="secondary-btn">Test AnkiConnect Link</button>
+          <span id="anki-status" class="save-status"></span>
+        </div>
+
+        <div class="action-row">
+          <button id="save-anki-btn" class="primary-btn">Save Anki Settings</button>
+        </div>
+
+        <div class="stats-panel" style="margin-top: 30px;">
+          <h3>Mined Vocabulary Manager</h3>
+          <p class="description" style="margin-bottom: 12px;" id="mined-count-text">You have 0 mined vocabulary words saved locally.</p>
+          <div class="action-row">
+            <button id="download-csv-btn" class="secondary-btn">💾 Download CSV for Anki</button>
+            <button id="clear-vocab-btn" class="danger-btn" style="margin-top:0;">🗑️ Clear Saved Words</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRIVACY TAB -->
+      <section id="tab-privacy" class="tab-pane">
+        <h2>Privacy & Session Statistics</h2>
+        <p class="description">Configure the privacy profile of your learning sessions and view API consumption metrics.</p>
+
+        <div class="form-group toggle-group">
+          <div class="toggle-control">
+            <input type="checkbox" id="ephemeral-mode">
+            <label for="ephemeral-mode">Enable Ephemeral Mode (In-Memory Only)</label>
+          </div>
+          <p class="help-text">If checked, no subtitles history or vocabulary mining lists will be written to disk. Closing the browser clears all session records instantly.</p>
+        </div>
+
+        <div class="stats-panel">
+          <h3>API Usage Today</h3>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-card-num" id="stat-opt-duration">0h 0m</span>
+              <span class="stat-card-label">Duration Processed</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card-num" id="stat-opt-requests">0</span>
+              <span class="stat-card-label">API Requests</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-card-num" id="stat-opt-cost">$0.00</span>
+              <span class="stat-card-label">Estimated Cost</span>
+            </div>
+          </div>
+          <button id="reset-stats-btn" class="danger-btn">Reset Stats</button>
+        </div>
+
+        <div class="action-row">
+          <button id="save-privacy-btn" class="primary-btn">Save Privacy Settings</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

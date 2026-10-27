@@ -1,0 +1,23 @@
+{
+  "name": "rikimashou",
+  "version": "1.0.0",
+  "description": "Real-time tab audio transcription and morphological analysis to maximize Japanese learning.",
+  "scripts": {
+    "build:dict": "node scripts/compile_dict.js",
+    "build:icons": "node scripts/generate_icons.js"
+  },
+  "keywords": [
+    "japanese",
+    "immersion",
+    "subtitles",
+    "whisper",
+    "anki",
+    "kuromoji"
+  ],
+  "author": "mehakag1120-cmd",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "kuromoji": "^0.1.2"
+  }
+}

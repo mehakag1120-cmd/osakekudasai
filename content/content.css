@@ -1,0 +1,569 @@
+/* ==========================================================================
+   Rikimashou! Subtitle & Dictionary Interface (21st.dev Inspired Aesthetic)
+   ========================================================================== */
+
+#osake-subtitle-overlay {
+  all: initial; /* Reset all CSS inheritance from host website */
+  box-sizing: border-box;
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 640px;
+  max-width: 92vw;
+  min-height: 84px;
+  max-height: 420px;
+  background: rgba(9, 9, 11, 0.88);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 24px 50px -12px rgba(0, 0, 0, 0.8), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Plus Jakarta Sans", "Inter", "Noto Sans JP", sans-serif !important;
+  color: #f4f4f5 !important;
+  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#osake-subtitle-overlay * {
+  box-sizing: border-box;
+}
+
+/* ==========================================================================
+   Header & Drag Handle
+   ========================================================================== */
+.osake-drag-handle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  user-select: none;
+  position: relative;
+}
+
+.osake-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Centered Subtle Grab Pill Indicator */
+.osake-drag-handle::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+.osake-header-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+/* Pulsing Status Pill */
+.osake-status-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  color: #f4f4f5 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  padding: 3px 10px !important;
+  border-radius: 9999px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.osake-pulse-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #ef4444;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  animation: osake-pulse 1.8s infinite;
+}
+
+@keyframes osake-pulse {
+  0% { transform: scale(0.95); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.6; }
+}
+
+.osake-status-badge.osake-status-warning {
+  color: #fb923c !important;
+  background: rgba(249, 115, 22, 0.1) !important;
+  border-color: rgba(249, 115, 22, 0.25) !important;
+}
+
+.osake-status-badge.osake-status-warning .osake-pulse-dot {
+  background-color: #fb923c;
+  box-shadow: 0 0 8px rgba(251, 146, 60, 0.6);
+}
+
+/* Header Buttons Row */
+.osake-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.osake-header-btn {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #a1a1aa !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  padding: 4px 10px !important;
+  border-radius: 8px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.osake-header-btn:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  transform: translateY(-1px);
+}
+
+.osake-header-btn.active {
+  background: rgba(139, 92, 246, 0.18) !important;
+  border-color: rgba(139, 92, 246, 0.35) !important;
+  color: #c4b5fd !important;
+}
+
+.osake-close-btn {
+  background: transparent !important;
+  border: none !important;
+  color: #71717a !important;
+  cursor: pointer !important;
+  padding: 4px 6px !important;
+  border-radius: 6px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  margin-left: 4px;
+}
+
+.osake-close-btn:hover {
+  background: rgba(239, 68, 68, 0.12) !important;
+  color: #f87171 !important;
+}
+
+/* ==========================================================================
+   Subtitle Content Area
+   ========================================================================== */
+.osake-subtitle-text {
+  flex-grow: 1;
+  padding: 18px 24px !important;
+  font-size: 26px !important;
+  font-weight: 500 !important;
+  line-height: 1.6 !important;
+  text-align: center !important;
+  overflow-y: auto;
+  user-select: text !important;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8) !important;
+  min-height: 54px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 2px 4px;
+}
+
+/* Content Word Tokens */
+.osake-word-token {
+  display: inline-block !important;
+  cursor: pointer !important;
+  padding: 2px 6px !important;
+  margin: 0 1px 4px 1px !important;
+  border-radius: 8px !important;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  color: #f4f4f5;
+  border: 1px solid transparent;
+}
+
+.osake-word-token:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+  transform: translateY(-1.5px);
+}
+
+.osake-word-token:active {
+  transform: translateY(0);
+}
+
+/* Known Word State (Subtly Faded for Immersion) */
+.osake-word-known {
+  opacity: 0.45 !important;
+  transition: opacity 0.2s ease;
+}
+
+.osake-word-known:hover {
+  opacity: 0.9 !important;
+}
+
+/* Grammatical Particles (助詞) - Clean Non-Intrusive Markers */
+.osake-particle-token {
+  display: inline-block !important;
+  padding: 2px 3px !important;
+  margin: 0 1px 4px 1px !important;
+  color: #a1a1aa !important;
+  font-weight: 400 !important;
+  user-select: text !important;
+  cursor: default !important;
+}
+
+/* Punctuation & Symbols */
+.osake-symbol-token {
+  display: inline-block !important;
+  margin: 0 2px 4px 2px !important;
+  color: #71717a !important;
+}
+
+/* ==========================================================================
+   JLPT Level Modern Accents
+   ========================================================================== */
+.osake-jlpt-5 { color: #34d399 !important; } /* N5 Emerald */
+.osake-jlpt-4 { color: #22d3ee !important; } /* N4 Cyan */
+.osake-jlpt-3 { color: #fbbf24 !important; } /* N3 Amber */
+.osake-jlpt-2 { color: #fb923c !important; } /* N2 Orange */
+.osake-jlpt-1 { color: #fb7185 !important; } /* N1 Rose */
+
+/* ==========================================================================
+   Stacked Ruby Typography (Kanji -> Furigana -> Romaji)
+   ========================================================================== */
+ruby {
+  display: inline-flex !important;
+  flex-direction: column-reverse !important;
+  align-items: center !important;
+  vertical-align: bottom !important;
+}
+
+rt {
+  display: block !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #e4e4e7 !important;
+  opacity: 0.88 !important;
+  margin-bottom: 2px !important;
+  user-select: none !important;
+  text-align: center !important;
+  line-height: 1 !important;
+}
+
+.osake-ruby-romaji {
+  display: block !important;
+  font-size: 8.5px !important;
+  font-weight: 500 !important;
+  color: #a1a1aa !important;
+  opacity: 0.7 !important;
+  line-height: 1.1 !important;
+  margin-top: 2px !important;
+  text-transform: lowercase !important;
+  letter-spacing: 0.03em !important;
+}
+
+/* ==========================================================================
+   Collapsible History Drawer
+   ========================================================================== */
+.osake-history-drawer {
+  display: none;
+  max-height: 190px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.45);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.osake-overlay-panel.osake-drawer-open .osake-history-drawer {
+  display: block;
+}
+
+.osake-history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background 0.15s ease;
+}
+
+.osake-history-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.osake-history-item:last-child {
+  border-bottom: none;
+}
+
+.osake-history-time {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #71717a;
+  margin-right: 14px;
+}
+
+.osake-history-tokens {
+  flex-grow: 1;
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.osake-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 12px;
+}
+
+.osake-history-replay-btn {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #e4e4e7 !important;
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 50% !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 11px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.osake-history-replay-btn:hover {
+  background: rgba(139, 92, 246, 0.25) !important;
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  color: #c4b5fd !important;
+  transform: scale(1.08);
+}
+
+/* ==========================================================================
+   Bottom Settings & Controls Bar
+   ========================================================================== */
+.osake-settings-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  background: rgba(0, 0, 0, 0.25);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.osake-control-item {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  color: #f4f4f5 !important;
+  font-size: 11.5px !important;
+  font-weight: 500 !important;
+  padding: 4px 10px !important;
+  outline: none !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.osake-control-item:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.osake-control-item option {
+  background: #18181b;
+  color: #f4f4f5;
+}
+
+.osake-checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: #a1a1aa;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.osake-checkbox-control:hover {
+  color: #f4f4f5;
+}
+
+.osake-checkbox-control input {
+  margin: 0;
+  accent-color: #8b5cf6;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Dictionary Tooltip Popup Card (21st.dev Floating Card)
+   ========================================================================== */
+.osake-dict-tooltip {
+  position: fixed;
+  width: 310px;
+  background: rgba(13, 14, 18, 0.94);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.85), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Plus Jakarta Sans", "Inter", "Noto Sans JP", sans-serif !important;
+  color: #f4f4f5 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: osake-tooltip-fade 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes osake-tooltip-fade {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.osake-dict-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 10px;
+}
+
+.osake-dict-word-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.osake-dict-kanji {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: #ffffff !important;
+}
+
+.osake-dict-reading {
+  font-size: 13px !important;
+  color: #c4b5fd !important;
+  margin-top: 2px;
+  font-weight: 500 !important;
+}
+
+/* Minimalist JLPT Pill */
+.osake-jlpt-badge {
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+  padding: 3px 10px !important;
+  border-radius: 9999px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+.osake-jlpt-badge.jlpt-5 { background: rgba(52, 211, 153, 0.15); color: #34d399 !important; border: 1px solid rgba(52, 211, 153, 0.3); }
+.osake-jlpt-badge.jlpt-4 { background: rgba(34, 211, 238, 0.15); color: #22d3ee !important; border: 1px solid rgba(34, 211, 238, 0.3); }
+.osake-jlpt-badge.jlpt-3 { background: rgba(251, 191, 36, 0.15); color: #fbbf24 !important; border: 1px solid rgba(251, 191, 36, 0.3); }
+.osake-jlpt-badge.jlpt-2 { background: rgba(251, 146, 60, 0.15); color: #fb923c !important; border: 1px solid rgba(251, 146, 60, 0.3); }
+.osake-jlpt-badge.jlpt-1 { background: rgba(251, 113, 133, 0.15); color: #fb7185 !important; border: 1px solid rgba(251, 113, 133, 0.3); }
+
+.osake-dict-meaning-section {
+  font-size: 13.5px !important;
+  line-height: 1.5 !important;
+  color: #d4d4d8 !important;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.osake-dict-meaning-item {
+  margin: 6px 0;
+  padding-left: 12px;
+  position: relative;
+}
+
+.osake-dict-meaning-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #8b5cf6;
+}
+
+/* Tooltip Action Buttons */
+.osake-dict-actions {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.osake-action-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 8px !important;
+  color: #f4f4f5 !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  padding: 7px 0 !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.osake-action-btn:hover {
+  background: rgba(139, 92, 246, 0.2) !important;
+  border-color: rgba(139, 92, 246, 0.35) !important;
+  color: #ffffff !important;
+}
+
+.osake-action-btn.active {
+  background: rgba(52, 211, 153, 0.18) !important;
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  color: #34d399 !important;
+}
+
+/* External Search Links */
+.osake-dict-links {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px !important;
+  color: #71717a !important;
+  padding-top: 2px;
+}
+
+.osake-dict-links a {
+  color: #a78bfa !important;
+  text-decoration: none !important;
+  transition: color 0.15s ease;
+}
+
+.osake-dict-links a:hover {
+  color: #c4b5fd !important;
+  text-decoration: underline !important;
+}

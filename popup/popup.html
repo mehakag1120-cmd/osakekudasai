@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="logo-area">
+        <span class="logo-emoji">💪</span>
+        <h1>rikimashou!</h1>
+      </div>
+      <span class="version">v1.0.0</span>
+    </header>
+
+    <main class="main-content">
+      <!-- Recording Status Indicator -->
+      <div id="status-container" class="status-box idle">
+        <span class="status-dot"></span>
+        <span id="status-text">Ready to Learn</span>
+      </div>
+
+      <!-- Action Button -->
+      <button id="toggle-capture-btn" class="primary-btn">
+        <span class="btn-text">Start Capture</span>
+      </button>
+
+      <!-- Cost / Audio Usage Stats (Week 2/3 but good placeholder for now) -->
+      <div class="usage-stats">
+        <div class="stat-item">
+          <span class="stat-label">Audio Captured:</span>
+          <span id="stat-duration" class="stat-value">0h 0m</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Requests (Est. Cost):</span>
+          <span id="stat-cost" class="stat-value">0 ($0.00)</span>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <button id="open-options-btn" class="link-btn">⚙️ Extension Settings</button>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
