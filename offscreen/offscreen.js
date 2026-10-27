@@ -26,13 +26,16 @@ let groqApiKeys = [];
 let groqKeyIndex = 0;
 let groqCooldownUntil = 0;
 
-let silenceDurationLimit = 150; // ms (Real-time pause detection)
-let minChunkDuration = 550;    // ms (Fast speech slice)
-let maxChunkDuration = 3200;   // ms (Sync with RPM governor)
+// Sub-second Real-Time VAD parameters
+let silenceDurationLimit = 160; // ms (Ultra-fast real-time 0.16s pause detection)
+let minChunkDuration = 450;    // ms (Fast speech slice 0.45s)
+let maxChunkDuration = 2000;   // ms (Maximum 2.0s chunk for continuous speech)
 let noiseFloor = 0.008;        // Adaptive ambient noise floor tracking
 
-// Rate limiter spacing to prevent hitting API quotas
-let lastApiRequestTime = 0;
+// Rolling 60-second sliding window for Groq rate limiter
+let groqTimestamps = [];
+const GROQ_WINDOW_MS = 60000;
+const GROQ_MAX_RPM_PER_KEY = 19; // Safe margin below Groq 20 RPM limit
 
 function setApiKeys(config) {
   if (config.apiProvider) apiProvider = config.apiProvider;
@@ -54,15 +57,6 @@ function getNextGroqKey() {
   const key = groqApiKeys[groqKeyIndex % groqApiKeys.length];
   groqKeyIndex++;
   return key;
-}
-
-function getMinRequestInterval() {
-  if (apiProvider === 'groq') {
-    const keyCount = Math.max(1, groqApiKeys.length);
-    // 3150ms guarantees ~19 RPM (< 20 RPM limit). With multiple keys: scales down
-    return Math.max(1200, Math.ceil(3150 / keyCount));
-  }
-  return 1500; // Gemini / OpenAI
 }
 
 // Contextual prompt buffer for Whisper API acceleration
@@ -98,15 +92,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     setApiKeys(message);
     if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
     
-    const minInterval = getMinRequestInterval();
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 400;
-      minChunkDuration = 1800;
-      maxChunkDuration = 4500;
-    } else { // fast
-      silenceDurationLimit = 150;
-      minChunkDuration = 550;
-      maxChunkDuration = Math.max(3200, minInterval);
+      silenceDurationLimit = 350;
+      minChunkDuration = 1200;
+      maxChunkDuration = 3500;
+    } else { // fast (ultra real-time sub-second)
+      silenceDurationLimit = 160;
+      minChunkDuration = 450;
+      maxChunkDuration = 2000;
     }
     
     startCapture(message.streamId);
@@ -114,15 +107,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     setApiKeys(message);
     if (message.silenceThreshold !== undefined) silenceThreshold = message.silenceThreshold;
     
-    const minInterval = getMinRequestInterval();
     if (message.speedMode === 'slow') {
-      silenceDurationLimit = 400;
-      minChunkDuration = 1800;
-      maxChunkDuration = 4500;
+      silenceDurationLimit = 350;
+      minChunkDuration = 1200;
+      maxChunkDuration = 3500;
     } else { // fast
-      silenceDurationLimit = 150;
-      minChunkDuration = 550;
-      maxChunkDuration = Math.max(3200, minInterval);
+      silenceDurationLimit = 160;
+      minChunkDuration = 450;
+      maxChunkDuration = 2000;
     }
   }
 });
@@ -189,10 +181,11 @@ async function startCapture(streamId) {
       }
 
       // Process and transcribe completed chunk only if it contains active speech sound!
-      if (currentPeak >= 0.012 || currentPeak > noiseFloor * 1.35) {
+      const hasSpeech = (currentPeak >= 0.020 && currentPeak > noiseFloor * 1.45) || (currentPeak >= silenceThreshold * 1.5);
+      if (hasSpeech) {
         processAudioChunk(blob, startTime, endTime);
       } else {
-        console.log(`Skipped silent chunk (Peak RMS: ${currentPeak.toFixed(4)}, noise floor: ${noiseFloor.toFixed(4)})`);
+        console.log(`Skipped non-speech chunk (Peak RMS: ${currentPeak.toFixed(4)}, noise floor: ${noiseFloor.toFixed(4)})`);
       }
     };
 
@@ -241,17 +234,14 @@ async function startCapture(streamId) {
 
         elapsedRecordingTime += 50;
 
-        const now = Date.now();
-        const timeSinceLastReq = now - lastApiRequestTime;
-        const minInterval = getMinRequestInterval();
+        // Ultra-low latency speech pause detection:
+        // Slices immediately when a speaker pauses (>= 160ms) after an utterance (>= 450ms)
+        const isNaturalPause = (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit);
+        // Or if speech is continuous for >= 2000ms
+        const isMaxDuration = (elapsedRecordingTime >= maxChunkDuration);
 
-        // Enforce strict rate-limiting governor:
-        // NEVER slice faster than minInterval to prevent HTTP 429
-        if (timeSinceLastReq >= minInterval) {
-          if (elapsedRecordingTime >= maxChunkDuration || 
-             (elapsedRecordingTime >= minChunkDuration && accumulatedSilenceTime >= silenceDurationLimit)) {
-            sliceChunk();
-          }
+        if (isNaturalPause || isMaxDuration) {
+          sliceChunk();
         }
       }, 50);
     });
@@ -371,7 +361,10 @@ async function transcribeGemini(blob, startTime, endTime) {
         ]
       }],
       generationConfig: {
-        temperature: 0.0
+        temperature: 0.0,
+        thinkingConfig: {
+          thinkingBudget: 0
+        }
       }
     })
   });
@@ -391,7 +384,12 @@ async function transcribeGemini(blob, startTime, endTime) {
               { text: 'Transcribe the spoken Japanese audio into Japanese text. Output ONLY the exact Japanese transcription. Do not translate. If silence, output empty string.' }
             ]
           }],
-          generationConfig: { temperature: 0.0 }
+          generationConfig: {
+            temperature: 0.0,
+            thinkingConfig: {
+              thinkingBudget: 0
+            }
+          }
         })
       });
       if (fbResponse.ok) {
@@ -409,29 +407,32 @@ async function transcribeGemini(blob, startTime, endTime) {
 
 // Process and transcribe audio chunk directly from offscreen
 function processAudioChunk(blob, startTime, endTime) {
-  // If Groq is cooling down after 429
-  if (apiProvider === 'groq' && groqCooldownUntil && Date.now() < groqCooldownUntil) {
-    if (geminiApiKey) {
-      console.log("Using Gemini during Groq rate limit cooldown.");
-      (async () => {
-        try {
-          const text = await transcribeGemini(blob, startTime, endTime);
-          handleTranscribedText(text, startTime, endTime, 'gemini');
-        } catch (err) {
-          console.warn("Gemini transcription fallback error:", err.message);
-        }
-      })();
-    }
-    return;
-  }
-
-  lastApiRequestTime = Date.now();
-
   (async () => {
     try {
       let text = '';
+      const now = Date.now();
 
-      if (apiProvider === 'gemini') {
+      // Clean up Groq timestamps older than 60s
+      groqTimestamps = groqTimestamps.filter(t => (now - t) < GROQ_WINDOW_MS);
+      const totalAllowedGroq = Math.max(1, groqApiKeys.length) * GROQ_MAX_RPM_PER_KEY;
+      const groqQuotaAvailable = (groqTimestamps.length < totalAllowedGroq) && (now > groqCooldownUntil);
+
+      let useGemini = (apiProvider === 'gemini');
+
+      // If Groq is the active provider but saturated its 19/20 limit in the current rolling minute:
+      if (apiProvider === 'groq' && !groqQuotaAvailable) {
+        if (geminiApiKey) {
+          console.log(`Groq quota saturated (${groqTimestamps.length}/${totalAllowedGroq} in 60s). Seamlessly routing chunk to Gemini!`);
+          useGemini = true;
+        } else {
+          // If no Gemini key, safely wait the remaining milliseconds until the oldest request clears
+          const oldest = groqTimestamps[0] || (now - GROQ_WINDOW_MS);
+          const waitMs = Math.max(50, Math.min(3000, GROQ_WINDOW_MS - (now - oldest) + 50));
+          await new Promise(r => setTimeout(r, waitMs));
+        }
+      }
+
+      if (useGemini) {
         text = await transcribeGemini(blob, startTime, endTime);
         handleTranscribedText(text, startTime, endTime, 'gemini');
         return;
@@ -444,11 +445,14 @@ function processAudioChunk(blob, startTime, endTime) {
           return;
         }
 
+        groqTimestamps.push(Date.now());
+
         const formData = new FormData();
         formData.append('file', blob, 'audio.webm');
         formData.append('language', 'ja');
         formData.append('model', 'whisper-large-v3-turbo');
         formData.append('temperature', '0.0');
+        formData.append('response_format', 'json');
         if (lastPromptContext) {
           formData.append('prompt', lastPromptContext.slice(-120));
         }
